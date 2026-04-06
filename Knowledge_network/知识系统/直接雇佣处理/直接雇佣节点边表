@@ -1,0 +1,320 @@
+import pandas as pd
+import os
+import re
+
+# === 路径配置 ===
+base_dir = r"D:\Documents\Desktop\Crowd_intelligence_wyq\Knowledge_network"
+
+direct_orders_dir    = os.path.join(base_dir, r"825补充数据-直接雇佣")
+direct_knowledge_dir = os.path.join(base_dir, r"直接雇佣知识抽取")
+
+# 输出根目录：每个年份一个子文件夹
+output_base_dir = os.path.join(base_dir, r"知识系统/直接雇佣处理")
+os.makedirs(output_base_dir, exist_ok=True)
+
+years = list(range(2014, 2026))
+
+
+def extract_bracket_content(title):
+    """从标题中提取【】内的能力标签"""
+    if pd.isna(title):
+        return None
+    m = re.search(r'【(.*?)】', str(title))
+    return m.group(1).strip() if m else None
+
+
+def extract_order_number_suffix(order_raw):
+    """
+    从字段3中提取订单编号的数字部分，用于构造 Axxxx / Bxxxx。
+    如果没有数字，就直接用整串作为后缀。
+    """
+    if pd.isna(order_raw):
+        return None
+    s = str(order_raw).strip()
+    if not s:
+        return None
+    m = re.search(r'(\d+)', s)
+    return m.group(1) if m else s
+
+
+def process_year(year: int):
+    print(f"\n===== 处理直接雇佣数据：{year} 年 =====")
+
+    # 1. 读取直接雇佣原始订单数据 AYYYY.csv
+    orders_path = os.path.join(direct_orders_dir, f"A{year}.csv")
+    if not os.path.exists(orders_path):
+        print(f"  警告：{orders_path} 不存在，跳过该年份。")
+        return
+
+    try:
+        df_orders = pd.read_csv(orders_path, encoding="utf-8-sig")
+    except Exception as e:
+        print(f"  读取 {orders_path} 出错：{e}")
+        return
+
+    if '字段3' not in df_orders.columns:
+        print(f"  致命：{orders_path} 中缺少 '字段3' 列，无法构建订单层。")
+        return
+
+    # 只保留有订单编号的行
+    df_orders['字段3'] = df_orders['字段3'].astype(str).str.strip()
+    df_orders = df_orders[df_orders['字段3'] != ""].copy()
+    if df_orders.empty:
+        print(f"  警告：{orders_path} 中无有效订单编号。")
+        return
+
+    # 2. 读取对应年份的知识抽取结果 AYYYY_with_knowledge.csv
+    knowledge_path = os.path.join(direct_knowledge_dir, f"A{year}_with_knowledge.csv")
+    df_know = None
+    if os.path.exists(knowledge_path):
+        try:
+            df_know = pd.read_csv(knowledge_path, encoding="utf-8-sig")
+        except Exception as e:
+            print(f"  读取 {knowledge_path} 出错：{e}")
+            df_know = None
+
+        if df_know is not None:
+            if '字段3' not in df_know.columns or '知识' not in df_know.columns:
+                print(f"  警告：{knowledge_path} 中缺少 '字段3' 或 '知识' 列，忽略知识层。")
+                df_know = None
+            else:
+                df_know['字段3'] = df_know['字段3'].astype(str).str.strip()
+    else:
+        print(f"  警告：{knowledge_path} 不存在，该年份只有主体/能力/订单层，没有知识层。")
+
+    # ========== 构建“增加列后的原始数据”（年度增强版） ==========
+
+    # 能力标签
+    df_orders['能力标签'] = df_orders['标题'].apply(extract_bracket_content) if '标题' in df_orders.columns else None
+    # 订单编号后缀（用来生成 Axxx / Bxxx）
+    df_orders['订单编号后缀'] = df_orders['字段3'].apply(extract_order_number_suffix)
+    # 虚拟主体 ID
+    df_orders['需求方'] = df_orders['订单编号后缀'].apply(
+        lambda x: f"A{x}" if pd.notna(x) else None
+    )
+    df_orders['设计师'] = df_orders['订单编号后缀'].apply(
+        lambda x: f"B{x}" if pd.notna(x) else None
+    )
+
+    # 若有知识抽取文件，则合并“知识”列
+    if df_know is not None:
+        df_orders = df_orders.merge(
+            df_know[['字段3', '知识']],
+            on='字段3',
+            how='left'
+        )
+    else:
+        df_orders['知识'] = None
+
+    # 这个 df_orders 就是“增加列后的原始数据”
+    df_aug = df_orders.copy()
+
+    # ========== 构建四层节点及边 ==========
+    subject_nodes = []          # 主体层节点
+    ability_nodes = []          # 能力层节点
+    order_nodes = []            # 订单层节点
+    knowledge_nodes = []        # 知识层节点
+
+    edges_subject_ability = []  # 主体 -> 能力
+    edges_ability_order = []    # 能力 -> 订单
+    edges_order_knowledge = []  # 订单 -> 知识
+    edges_knowledge_knowledge = []  # 知识 <-> 知识（共现）
+
+    # --- 主体 / 能力 / 订单 层 ---
+    for _, row in df_aug.iterrows():
+        order_id = str(row['字段3']).strip()
+        if not order_id:
+            continue
+
+        title = row['标题'] if '标题' in df_aug.columns else None
+        price = row['价格'] if '价格' in df_aug.columns else None
+        ability_label = row['能力标签']
+        demander_id = row['需求方']
+        designer_id = row['设计师']
+
+        # 主体层：需求方 / 设计师（type 区分，z=3）
+        if pd.notna(demander_id):
+            # ID, Name, 主体类型, type, [z]
+            subject_nodes.append([demander_id, demander_id, '需求方', '需求方', 3])
+        if pd.notna(designer_id):
+            subject_nodes.append([designer_id, designer_id, '设计师', '设计师', 3])
+
+        # 能力层（type=能力，z=2）
+        if pd.notna(ability_label) and ability_label != "":
+            ability_nodes.append([ability_label, ability_label, '能力', '能力', 2])
+            # 主体 -> 能力
+            if pd.notna(demander_id):
+                edges_subject_ability.append([demander_id, ability_label, '发布'])
+            if pd.notna(designer_id):
+                edges_subject_ability.append([designer_id, ability_label, '完成'])
+            # 能力 -> 订单
+            edges_ability_order.append([ability_label, order_id, '属于'])
+
+        # 订单层：ID 用字段3原文，不加前缀（type=订单，z=1）
+        order_nodes.append([order_id, title, price, '订单', 1])
+
+    # --- 知识层 & 订单 -> 知识 & 知识 <-> 知识 共现 边 ---
+    for _, row in df_aug.iterrows():
+        order_id = str(row['字段3']).strip()
+        if not order_id:
+            continue
+        know_str = row.get('知识', None)
+        if pd.isna(know_str) or know_str is None:
+            continue
+
+        # 清洗并去重当前订单的知识关键词
+        tokens = re.split(r'[，,]', str(know_str))
+        keywords = []
+        for token in tokens:
+            kw = token.strip()
+            if not kw:
+                continue
+            if kw not in keywords:  # 保持顺序的去重
+                keywords.append(kw)
+
+        # 订单 -> 知识 & 知识节点
+        for kw in keywords:
+            kn_id = f"knowledge:{kw}"
+            # 知识层节点：ID, Name, 知识类型, type, [z]
+            # 知识层 [z] = 0，type = “知识”
+            knowledge_nodes.append([kn_id, kw, '关键词', '知识', 0])
+            edges_order_knowledge.append([order_id, kn_id, '关联'])
+
+        # 知识 <-> 知识 共现边（无向，按 ID 排序保证一条边）
+        for i in range(len(keywords)):
+            for j in range(i + 1, len(keywords)):
+                kw_i = keywords[i]
+                kw_j = keywords[j]
+                id_i = f"knowledge:{kw_i}"
+                id_j = f"knowledge:{kw_j}"
+                # 无向边：排序后固定 Source/Target
+                if id_i <= id_j:
+                    s, t = id_i, id_j
+                else:
+                    s, t = id_j, id_i
+                edges_knowledge_knowledge.append([s, t, '共现'])
+
+    # ========== 去重 ==========
+    if subject_nodes:
+        df_subject_nodes = pd.DataFrame(
+            subject_nodes,
+            columns=['ID', 'Name', '主体类型', 'type', '[z]']
+        ).drop_duplicates()
+    else:
+        df_subject_nodes = pd.DataFrame(columns=['ID', 'Name', '主体类型', 'type', '[z]'])
+
+    if ability_nodes:
+        df_ability_nodes = pd.DataFrame(
+            ability_nodes,
+            columns=['ID', 'Name', '能力类型', 'type', '[z]']
+        ).drop_duplicates()
+    else:
+        df_ability_nodes = pd.DataFrame(columns=['ID', 'Name', '能力类型', 'type', '[z]'])
+
+    if order_nodes:
+        df_order_nodes = pd.DataFrame(
+            order_nodes,
+            columns=['ID', '标题', '价格', 'type', '[z]']
+        ).drop_duplicates()
+    else:
+        df_order_nodes = pd.DataFrame(columns=['ID', '标题', '价格', 'type', '[z]'])
+
+    if knowledge_nodes:
+        df_knowledge_nodes = pd.DataFrame(
+            knowledge_nodes,
+            columns=['ID', 'Name', '知识类型', 'type', '[z]']
+        ).drop_duplicates()
+    else:
+        df_knowledge_nodes = pd.DataFrame(columns=['ID', 'Name', '知识类型', 'type', '[z]'])
+
+    if edges_subject_ability:
+        df_edges_sa = pd.DataFrame(
+            edges_subject_ability,
+            columns=['Source', 'Target', 'Type']
+        ).drop_duplicates()
+    else:
+        df_edges_sa = pd.DataFrame(columns=['Source', 'Target', 'Type'])
+
+    if edges_ability_order:
+        df_edges_ao = pd.DataFrame(
+            edges_ability_order,
+            columns=['Source', 'Target', 'Type']
+        ).drop_duplicates()
+    else:
+        df_edges_ao = pd.DataFrame(columns=['Source', 'Target', 'Type'])
+
+    if edges_order_knowledge:
+        df_edges_ok = pd.DataFrame(
+            edges_order_knowledge,
+            columns=['Source', 'Target', 'Type']
+        ).drop_duplicates()
+    else:
+        df_edges_ok = pd.DataFrame(columns=['Source', 'Target', 'Type'])
+
+    if edges_knowledge_knowledge:
+        df_edges_kk = pd.DataFrame(
+            edges_knowledge_knowledge,
+            columns=['Source', 'Target', 'Type']
+        ).drop_duplicates()
+    else:
+        df_edges_kk = pd.DataFrame(columns=['Source', 'Target', 'Type'])
+
+    # ========== 按年份输出：一个年份一个文件夹 ==========
+    year_out_dir = os.path.join(output_base_dir, str(year))
+    os.makedirs(year_out_dir, exist_ok=True)
+
+    # 1）增强后的原始数据
+    df_aug.to_csv(
+        os.path.join(year_out_dir, f"直接雇佣-原始数据增强-{year}.csv"),
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    # 2）各层节点
+    df_subject_nodes.to_csv(
+        os.path.join(year_out_dir, f"主体层节点-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_ability_nodes.to_csv(
+        os.path.join(year_out_dir, f"能力层节点-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_order_nodes.to_csv(
+        os.path.join(year_out_dir, f"订单层节点-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_knowledge_nodes.to_csv(
+        os.path.join(year_out_dir, f"知识层节点-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+
+    # 3）各类边
+    df_edges_sa.to_csv(
+        os.path.join(year_out_dir, f"边-主体到能力-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_edges_ao.to_csv(
+        os.path.join(year_out_dir, f"边-能力到订单-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_edges_ok.to_csv(
+        os.path.join(year_out_dir, f"边-订单到知识-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+    df_edges_kk.to_csv(
+        os.path.join(year_out_dir, f"边-知识到知识-直接雇佣-{year}.csv"),
+        index=False, encoding="utf-8-sig"
+    )
+
+    print(
+        f"  年份 {year} 输出完成："
+        f"主体 {len(df_subject_nodes)}，能力 {len(df_ability_nodes)}，"
+        f"订单 {len(df_order_nodes)}，知识 {len(df_knowledge_nodes)}，"
+        f"知识共现边 {len(df_edges_kk)}。"
+    )
+
+
+if __name__ == "__main__":
+    for y in years:
+        process_year(y)
+    print("\n=== 所有年份的直接雇佣多层网络构建完成 ===")

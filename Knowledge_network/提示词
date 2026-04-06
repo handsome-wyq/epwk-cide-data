@@ -1,0 +1,436 @@
+ 1. 任务描述：
+    作为系统分析师，您需要解读并理解设计任务需求文档，用于群智众包场景。需求文本包含设计任务的相关信息，涉及实体和关系提取。您的任务是使用思维链（Chain-of-Thought, CoT）方法，通过推理逐步提取规范的实体和关系，转换为结构化数据。实体需严格符合预定义的分类体系，关系需确保三元组的头和尾均为规范实体，仅识别必要的实体与关系。
+
+    2. 推理引导（使用 CoT 方法）：
+    请按照以下步骤逐步推理，确保每一步逻辑清晰：
+    - 步骤 1：提取规范实体，基于分类体系分类，将修饰信息（如时间、数量）嵌入属性。其中每条数据都提取一个设计对象。
+    - 步骤 2：生成所有可能的实体对，准备进行关系推理。
+    - 步骤 3：对每个实体对，使用 CoT 推理：
+      - 分析上下文，判断实体对之间是否存在关系。
+      - 如果存在关系，确定关系类型（如“设计”、“面向”）。
+      - 验证关系是否符合语义逻辑。
+    - 步骤 4：校验三元组，确保头和尾均为分类体系中的实体。
+    - 步骤 5：生成结构化数据，记录推理过程。
+ 
+    3. 设计任务信息提取模板：
+    实体分类体系：
+        1. 核心实体：
+            - 设计对象：如“餐饮品牌”、“商标”
+            - 设计功能：如“响应式布局”、“品牌标识突出”
+        2. 附属实体：
+            - 设计风格：如“简约”、“复古”、“科技感”
+            - 业务场景：
+                 - 目标用户：如“年轻人”、“企业客户”
+                - 区域限定：如“中国风”、“欧美市场”
+                - 第三方融合：如“微信小程序”、“抖音”
+            - 技术栈实体：
+            - 工具与技术：如“Photoshop”、“Python”
+            - 材质与工艺：如“木材”、“印刷”
+        3. 约束实体：
+            - 开发限制：
+                - 物理约束：如“1920x1080像素”
+                - 资源约束：如“现成方案”、“定制开发”
+            - 设计要求：如“版权合规”
+    设计对象：
+       - 企业与行业标识：如餐饮行业、电器行业、服装行业、IT公司、咨询公司、装修与建筑公司、智能科技公司、白酒企业、博物馆等
+       - 产品：如玻璃瓶、不干胶等              
+       - 数字应用：如APP、网站、公众号等
+       - 活动标识：如活动、赛事标志等
+       - 创意衍生：如吉祥物、字体、创意LOGO等
+    实体模板：
+    {{"id": "{{实体名称}}", "type": "{{实体类型}}", "attributes": {{"属性名": "{{属性值}}"}}}}
+    关系模板：
+    {{"source": "{{主语}}", "target": "{{宾语}}", "relation": "{{关系类型}}"}}
+
+    4. 输出格式：
+    每段文本的输出应包含“category”、“explanation”和“structured_data”。输出使用JSON格式，包含以下字段：
+    - "category"：任务类型（固定为“实体与关系提取”）。
+    - "explanation"：推理过程的解释，说明每一步的推理逻辑。
+    - "structured_data"：根据模板转换后的结构化数据，包含“entities”和“relations”。
+
+    输入信息：
+    任务标题: {title}
+    任务要求: {requirements}
+
+    请根据上述任务描述、推理引导和模板，使用 CoT 方法提取实体和关系，并生成结构化数据。
+
+    ----------------------
+'''
+def extract_entities_and_relations(row):
+    try:
+        title = row['标题'] if pd.notna(row['标题']) else "未知标题"
+        requirements = row['需求文本'] if pd.notna(row['需求文本']) else "无任务要求"
+        prompt = f"""
+        1. 任务描述：
+        作为系统分析师，您需要解读并理解设计任务需求文档，用于群智众包场景。需求文本包含设计任务的相关信息，涉及实体和关系提取。您的任务是使用思维链（Chain-of-Thought, CoT）方法，通过推理逐步提取规范的实体和关系，转换为结构化数据。实体需严格符合预定义的分类体系，关系需确保三元组的头和尾均为规范实体，仅识别必要的实体与关系。
+        2. 推理引导（使用 CoT 方法）：
+        请按照以下步骤逐步推理，确保每一步逻辑清晰：
+        - 步骤 1：提取规范实体，基于分类体系分类，将修饰信息（如时间、数量）嵌入属性。
+        - 步骤 2：生成所有可能的实体对，准备进行关系推理。
+        - 步骤 3：对每个实体对，使用 CoT 推理：
+          - 分析上下文，判断实体对之间是否存在关系。
+          - 如果存在关系，确定关系类型（如“设计”、“面向”）。
+          - 验证关系是否符合语义逻辑。
+        - 步骤 4：校验三元组，确保头和尾均为分类体系中的实体。
+        - 步骤 5：生成结构化数据，记录推理过程。
+
+        3. 设计任务信息提取模板：
+        实体分类体系：
+        1. 核心实体：
+           - 需求本体：如“VI设计”、“界面设计”、“产品外观设计”
+           - 设计对象：如“餐饮品牌”、“包装盒”、“宠物店”
+           - 设计功能：如“响应式布局”、“品牌标识突出”
+        2. 附属实体：
+           - 设计风格：如“简约”、“复古”、“科技感”
+           - 业务场景：
+             - 行业领域：如“教育”、“电商”
+             - 目标用户：如“年轻人”、“企业客户”
+             - 区域限定：如“中国风”、“欧美市场”
+             - 第三方融合：如“微信小程序”、“抖音”
+           - 技术栈实体：
+           - 工具与技术：如“Photoshop”、“Python”
+           - 材质与工艺：如“木材”、“印刷”
+        3. 约束实体：
+           - 开发限制：
+             - 物理约束：如“1920x1080像素”
+             - 资源约束：如“现成方案”、“定制开发”
+           - 设计要求：如“版权合规”
+        实体模板：
+        {{"id": "{{实体名称}}", "type": "{{实体类型}}", "attributes": {{"属性名": "{{属性值}}"}}}}
+        关系模板：
+        {{"source": "{{主语}}", "target": "{{宾语}}", "relation": "{{关系类型}}"}}
+
+        4. 输出格式：
+        每段文本的输出应包含“category”、“explanation”和“structured_data”。输出使用JSON格式，包含以下字段：
+        - "category"：任务类型（固定为“实体与关系提取”）。
+        - "explanation"：推理过程的解释，说明每一步的推理逻辑。
+        - "structured_data"：根据模板转换后的结构化数据，包含“entities”和“relations”。
+
+        5. 示例：
+        输入：设计一个面向年轻用户的电商平台APP界面，要求采用简约风格，使用Figma工具进行设计，尺寸为375x812像素（iPhone X）。
+        输出：
+        {{
+            "category": "实体与关系提取",
+            "explanation": [
+                "步骤 1：提取规范实体",根据预定义的实体分类体系（核心实体、附属实体、约束实体），我将从需求文档中提取实体，并将修饰信息嵌入属性中。
+                "  - 识别核心实体：
+                "       - 设计对象：文档提到“APP界面”，这是需要设计的目标对象。由于上下文表明这是一个“电商平台APP界面”，我将其命名为“APP界面”，并添加属性“特性: 电商平台”。",
+                "  - 识别附属实体：
+                "       - 目标用户：文档明确提到“面向年轻用户”，因此“年轻用户”是目标用户实体。
+                "       - 设计风格：文档要求“采用简约风格”，因此“简约风格”是设计风格实体。
+                "       - 工具与技术：文档指定“使用Figma工具进行设计”，因此“Figma”是工具与技术实体。
+                "  - 识别约束实体：
+                "       - 物理约束：文档提到“尺寸为375x812像素（iPhone X）”，因此“375x812像素（iPhone X）”是物理约束实体。
+                "步骤 2：生成实体对",为了后续关系推理，我生成所有可能的实体对。由于实体数量为7个，理论上共有21个无序对。为简化分析，我将重点关注与“APP界面”（核心设计对象）相关的实体对，以及其他可能存在关系的组合。部分实体对如下：
+                "  - 可能的实体对：(APP界面, 年轻用户),(APP界面, 简约风格),(APP界面, Figma),(APP界面, 375x812像素（iPhone X）),(年轻用户, 简约风格) 。",
+                "步骤 3：CoT 关系推理",我将逐一分析实体对，基于文档上下文判断是否存在关系，确定关系类型，并验证语义逻辑。
+                "  - 实体对 (APP界面, 年轻用户)：
+                        - 上下文分析：文档说“设计一个面向年轻用户的电商平台APP界面”，“面向”明确表示APP界面是为年轻用户设计的。
+                        - 关系类型：“面向”
+                        - 语义验证：APP界面作为设计对象，面向特定用户群体（如年轻用户）是合理的设计关系。
+                        - 结论：存在关系，三元组为{{"source": "APP界面", "target": "年轻用户", "relation": "面向"}}。",
+                "  - 实体对 (APP界面, 简约风格)：
+                        - 上下文分析：文档说“要求采用简约风格”，“采用”表示APP界面在设计时使用简约风格。
+                        - 关系类型：“采用”
+                        - 语义验证：设计对象采用某种风格是常见的设计关系，符合逻辑。
+                        - 结论：存在关系，三元组为{{"source": "APP界面", "target": "简约风格", "relation": "采用"}}。",
+                "  - 实体对 (APP界面, Figma)：
+                        - 上下文分析：文档说“使用Figma工具进行设计”，“使用”表示APP界面设计依赖Figma工具。
+                        - 关系类型：“使用”
+                        - 语义验证：设计对象使用特定工具是合理的技术关系。
+                        - 结论：存在关系，三元组为{{"source": "APP界面", "target": "Figma", "relation": "使用"}}。",
+                "  - 实体对 (APP界面, 375x812像素（iPhone X）)：
+                        - 上下文分析：文档说“尺寸为375x812像素（iPhone X）”，“尺寸”明确描述APP界面的物理规格。
+                        - 关系类型：“尺寸”
+                        - 语义验证：设计对象的尺寸由物理约束定义，符合逻辑。
+                        - 结论：存在关系，三元组为{{"source": "APP界面", "target": "375x812像素（iPhone X）", "relation": "尺寸"}}。",
+                "  - 实体对 (年轻用户, 简约风格)：
+                        - 上下文分析：文档未提及“年轻用户”和“简约风格”之间的直接关系，它们都是通过“APP界面”间接关联。
+                        - 结论：无直接关系。",
+                "步骤 4：校验三元组",
+                "  - 所有三元组的头和尾均为实体列表中的规范实体，关系类型（面向、采用、使用、尺寸）语义合理。校验通过。",
+                "步骤 5：生成结构化数据",
+                "  - 按照模板，将实体和关系填入 structured_data。"
+            ],
+            "structured_data": {{
+                "entities": [
+                    {{"id": "APP界面", "type": "设计对象", "attributes": {{"特性": "电商平台"}}}},
+                    {{"id": "年轻用户", "type": "目标用户", "attributes": {{}}}},
+                    {{"id": "简约风格", "type": "设计风格", "attributes": {{}}}},
+                    {{"id": "Figma", "type": "工具与技术", "attributes": {{}}}},
+                    {{"id": "75x812像素（iPhone X）", "type": "物理约束", "attributes": {{}}}},
+                    {{"id": "高保真原型", "type": "设计要求", "attributes": {{}}}}
+                ],
+                "relations": [
+                    {{"source": "APP界面", "target": "年轻用户", "relation": "面向"}},
+                    {{"source": "APP界面", "target": "简约风格", "relation": "采用"}},
+                    {{"source": "APP界面", "target": "Figma", "relation": "使用"}},
+                    {{"source": "APP界面", "target": "375x812像素（iPhone X）", "relation": "尺寸"}},
+                    {{"source": "APP界面", "target": "7天", "relation": "时间约束"}},
+                    {{"source": "APP界面", "target": "高保真原型", "relation": "要求"}},
+                ]
+            }}
+        }}
+
+        输入信息：
+        任务标题: {title}
+        任务要求: {requirements}
+
+
+        请根据上述任务描述、推理引导和模板，使用 CoT 方法提取实体和关系，并生成结构化数据。
+        """
+
+        print(f"正在处理行: {row.name}")
+        response = client.chat.completions.create(
+            model="deepseek-reasoner",
+            messages=[
+                {"role": "system",
+                 "content": "你是一个专业的需求分析助手，擅长从设计任务文本中提取规范实体和关系。请严格按照用户指定的 JSON 格式返回结果，仅返回 JSON 字符串，不添加任何多余内容。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=1.0,
+            max_tokens=4096
+        )
+        result = response.choices[0].message.content.strip()
+        result = result.strip('```json').strip('```').strip().replace('\n', '').replace('\r', '')
+        print(f"API 返回结果: {repr(result)}")
+        try:
+            parsed_result = json.loads(result)
+            # 后处理校验：确保关系中的 source 和 target 在 entities 中
+            entities = {e["id"] for e in parsed_result["structured_data"]["entities"]}
+            valid_relations = [
+                r for r in parsed_result["structured_data"]["relations"]
+                if r["source"] in entities and r["target"] in entities
+            ]
+            parsed_result["structured_data"]["relations"] = valid_relations
+            return parsed_result
+        except json.JSONDecodeError as e:
+            print(f"第 {row.name} 行返回结果无效 JSON: {str(e)}，原始结果: {repr(result)}")
+            return None
+    except Exception as e:
+        print(f"处理行数据时发生错误: {str(e)}")
+        return None'''
+
+----------------------------------
+'''#批量提取实体，并解析json
+import logging
+import json
+import pandas as pd
+import asyncio
+import os
+from openai import AsyncOpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# 初始化异步 DeepSeek 客户端
+
+client = AsyncOpenAI(
+    base_url="https://chatapi.littlewheat.com/v1",
+    api_key="sk-aEpQY7lI3dLk3ILoaeLHbh6VtFxW3cTFXzljkv3QN5CgHb0I"
+)
+
+def generate_prompt(row):
+    """生成单行数据的提示文本"""
+    title = row['标题'] if pd.notna(row['标题']) else "未知标题"
+    requirements = row['需求文本'] if pd.notna(row['需求文本']) else "无任务要求"
+    prompt = f"""
+    你是一个专业的需求分析助手，从设计任务文本中提取规范实体和关系，用于群智众包场景。请使用思维链（CoT）方法，逐步推理，生成结构化JSON输出。
+    **任务**：
+    1. 提取规范实体，基于分类体系，嵌入属性（如时间、数量）。
+    2. 生成实体对，推理关系（如“设计”、“面向”），验证三元组逻辑。
+    3. 输出JSON，包含“category”、“explanation”和“structured_data”。
+
+    **实体分类**：
+    - 核心实体：设计对象（如“餐饮品牌”）、设计功能（如“品牌标识突出”）
+    - 附属实体：设计风格（如“简约”）、目标用户（如“年轻人”）、工具（如“Photoshop”）
+    - 约束实体：物理约束（如“1920x1080像素”）、设计要求（如“版权合规”）
+
+    **模板**：
+    - 实体：{{"id": "{{实体名称}}", "type": "{{实体类型}}"}}
+    - 关系：{{"source": "{{主语}}", "target": "{{宾语}}", "relation": "{{关系类型}}"}}
+
+    **输入**：
+    标题: {title}
+    需求: {requirements}
+
+    **输出**：
+    ```json
+    {"category": "实体与关系提取","explanation": "推理过程","structured_data": {"entities": [], "relations": []}}
+    ```
+    **示例**：
+    输入：
+    标题:【LOGO设计】餐饮品牌LOGO设计
+    需求: 设计一个简约风格的餐饮品牌LOGO，面向年轻人，需突出品牌标识，尺寸为1920x1080像素。
+    输出：
+    ```json
+    {{"category": "实体与关系提取","structured_data":{{"entities": [{{"id": "餐饮品牌", "type": "设计对象"}},{{"id": "简约", "type": "设计风格"}},{{"id": "年轻人", "type": "目标用户"}},{{"id": "1920x1080像素", "type": "物理约束"}}],"relations": [{{"source": "餐饮品牌", "target": "年轻人", "relation": "面向"}},{{"source": "餐饮品牌", "target": "简约", "relation": "设计"}}]}}}}
+    ```
+    """
+    return prompt
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+async def extract_entities_and_relations(row, index):
+    """异步提取单行数据的实体和关系"""
+    try:
+        prompt = generate_prompt(row)
+        logger.info(f"正在处理行: {index}")
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是一个专业的需求分析助手，擅长从设计任务文本中提取规范实体和关系。请严格按照用户指定的 JSON 格式返回结果，仅返回 JSON 字符串，不添加任何多余内容。"
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,
+            max_tokens=2000
+        )
+
+        result = response.choices[0].message.content.strip()
+        result = result.strip('```json').strip('```').strip().replace('\n', '').replace('\r', '')
+        logger.debug(f"第 {index} 行 API 返回结果: {repr(result)}")
+
+        parsed_result = json.loads(result)
+        entities = {e["id"] for e in parsed_result["structured_data"]["entities"]}
+        valid_relations = [
+            r for r in parsed_result["structured_data"]["relations"]
+            if r["source"] in entities and r["target"] in entities
+        ]
+        parsed_result["structured_data"]["relations"] = valid_relations
+        return index, parsed_result
+    except json.JSONDecodeError as e:
+        logger.error(f"第 {index} 行返回结果无效 JSON: {str(e)}, 原始结果: {repr(result)}")
+        return index, None
+    except Exception as e:
+        logger.error(f"处理行 {index} 时发生错误: {str(e)}")
+        return index, None
+
+async def process_batch(data_subset, output_file, batch_size=5):
+    """异步处理数据子集，提取实体和关系"""
+    if data_subset.empty:
+        logger.warning("数据子集为空，无法处理！")
+        return [], []
+
+    all_results = []
+    all_failed_rows = []
+
+    for i in range(0, len(data_subset), batch_size):
+        batch = data_subset.iloc[i:i + batch_size]
+        logger.info(f"正在处理第 {i + 1} 到 {i + batch_size} 行...")
+
+        # 创建异步任务
+        tasks = [
+            extract_entities_and_relations(row, index)
+            for index, row in batch.iterrows()
+        ]
+
+        # 并行执行任务并捕获异常
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 处理结果
+        batch_records = []
+        for task_result in results:
+            if isinstance(task_result, Exception):
+                logger.error(f"任务失败: {str(task_result)}")
+                continue
+
+            index, result = task_result
+            if result is None:
+                logger.error(f"第 {index} 行提取失败")
+                all_failed_rows.append({"index": index, "error": "提取失败", "input": data_subset.loc[index].to_dict()})
+                continue
+
+            try:
+                # 提取指定字段并添加提取结果
+                record = {
+                    "需求方": data_subset.loc[index, "需求方"] if pd.notna(data_subset.loc[index, "需求方"]) else "",
+                    "需求文本": data_subset.loc[index, "需求文本"] if pd.notna(data_subset.loc[index, "需求文本"]) else "",
+                    "任务编号": data_subset.loc[index, "任务编号"] if pd.notna(data_subset.loc[index, "任务编号"]) else "",
+                    "交易价格": data_subset.loc[index, "交易价格"] if pd.notna(data_subset.loc[index, "交易价格"]) else "",
+                    "提取结果": result
+                }
+                batch_records.append(record)
+                all_results.append(result)
+                logger.info(f"第 {index} 行处理成功")
+            except Exception as e:
+                logger.error(f"记录第 {index} 行结果失败: {str(e)}")
+                all_failed_rows.append({"index": index, "error": "结果记录失败", "input": data_subset.loc[index].to_dict()})
+
+        # 批量写入
+        if batch_records:
+            with open(output_file, 'a', encoding='utf-8') as f:
+                for record in batch_records:
+                    json.dump(record, f, ensure_ascii=False)
+                    f.write('\n')
+
+    logger.info(f"处理完成，结果数量: {len(all_results)}, 失败数量: {len(all_failed_rows)}")
+    return all_results, all_failed_rows
+
+async def async_main(data_subset, output_file):
+    return await process_batch(data_subset, output_file, batch_size=5)
+
+def test_entity_extraction(file_path, output_dir="815TEST", method='range', start_row=0, end_row=10, sample_size=10, condition=None):
+    """测试实体提取功能"""
+    try:
+        data = pd.read_csv(file_path, encoding='utf-8')
+        logger.info(f"原始数据行数: {len(data)}")
+    except FileNotFoundError:
+        logger.error(f"文件 {file_path} 不存在，请检查路径！")
+        return
+    except Exception as e:
+        logger.error(f"读取 CSV 文件失败: {str(e)}")
+        return
+
+    # 校验必要列
+    required_columns = ['标题', '需求文本', '需求方', '任务编号', '交易价格']
+    missing_columns = [col for col in required_columns if col not in data.columns]
+    if missing_columns:
+        logger.error(f"缺少必要列: {missing_columns}")
+        return
+
+    # 选择数据子集
+    if method == 'range':
+        data_subset = data.iloc[start_row:end_row].copy()
+        logger.info(f"选择行范围: {start_row} 到 {end_row - 1}")
+    elif method == 'random':
+        data_subset = data.sample(n=min(sample_size, len(data))).copy()
+        logger.info(f"随机抽样 {sample_size} 行")
+    elif method == 'condition' and condition:
+        data_subset = data.query(condition).copy()
+        logger.info(f"按条件过滤: {condition}")
+    else:
+        raise ValueError("不支持的选择方法，请选择 'range', 'random' 或 'condition'")
+
+    logger.info(f"测试数据行数: {len(data_subset)}")
+
+    # 设置输出文件和错误日志文件
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, '815.json')
+    error_log_file = os.path.join(output_dir, '815error_log_test.json')
+
+    # 初始化输出文件
+    if not os.path.exists(output_file):
+        with open(output_file, 'w', encoding='utf-8') as f:
+            pass
+
+    # 异步处理数据
+    results, failed_rows = asyncio.run(async_main(data_subset, output_file))
+
+    # 保存错误日志
+    if failed_rows:
+        with open(error_log_file, 'w', encoding='utf-8') as f:
+            json.dump(failed_rows, f, ensure_ascii=False, indent=4)
+        logger.info(f"错误日志已保存至: {error_log_file}")
+    else:
+        logger.info("无处理失败的行。")
+
+    logger.info(f"提取结果已保存至: {output_file}")
+
+if __name__ == "__main__":
+    file_path = 'D:/Documents/Desktop/Crowd_intelligence_wyq/Knowledge_network/815.csv'
+    test_entity_extraction(file_path, method='range', start_row=0, end_row=28)'''
